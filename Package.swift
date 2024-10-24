@@ -6,7 +6,8 @@ import PackageDescription
 let package = Package(
     name: "WireGuardKit",
     platforms: [
-        .iOS(.v12)
+        .iOS(.v12),
+        .macOS(.v11),
     ],
     products: [
         .library(name: "WireGuardKit", targets: ["WireGuardKit"])
