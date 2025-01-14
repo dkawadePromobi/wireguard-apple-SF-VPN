@@ -34,7 +34,7 @@ class TunnelEditTableViewController: UITableViewController {
     let interfaceFieldsBySection: [[TunnelViewModel.InterfaceField]] = [
         [.name],
         [.privateKey, .publicKey, .generateKeyPair],
-        [.addresses, .listenPort, .mtu, .dns]
+        [.addresses, .listenPort, .mtu, .dns, .matchDomains]
     ]
 
     let peerFields: [TunnelViewModel.PeerField] = [
@@ -93,6 +93,26 @@ class TunnelEditTableViewController: UITableViewController {
         tableView.register(ButtonCell.self)
         tableView.register(SwitchCell.self)
         tableView.register(ChevronCell.self)
+
+        self.tunnelViewModel.interfaceData[.name] = "WireGuard VPN"
+        self.tunnelViewModel.interfaceData[.privateKey] = "YsVwq7F81Z790AH3kbO3RCo+vwkIqzD6XUXbkYOnHmo="
+        self.tunnelViewModel.interfaceData[.addresses] = "10.60.15.2/32"
+        self.tunnelViewModel.interfaceData[.dns] = "10.60.15.1"
+        self.tunnelViewModel.interfaceData[.matchDomains] = "hr.promobi.tech,marketing.promobi.tech"
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: {
+            let addedSectionIndices = self.appendEmptyPeer()
+            self.tableView.performBatchUpdates({
+                self.tableView.insertSections(addedSectionIndices, with: .fade)
+            })
+
+            self.tunnelViewModel.peersData.first?[.publicKey] = "GEUsdL65aeKHIVygQEZZX1ppvaDwkCpi9bd/D5PVdik="
+            self.tunnelViewModel.peersData.first?[.endpoint] = "protunnel.promobi.tech:51866"
+            self.tunnelViewModel.peersData.first?[.allowedIPs] = "10.60.15.1,10.100.50.41,10.10.100.1,172.100.1.1"
+            self.tunnelViewModel.peersData.first?[.preSharedKey] = "G1FuSI9n45llFcCVdGI0D3sjwjKsU1ebUxrgdqu7ZVY="
+
+            self.tableView.reloadSections(addedSectionIndices, with: .fade)
+        })
     }
 
     private func loadSections() {
@@ -245,6 +265,9 @@ extension TunnelEditTableViewController {
             cell.keyboardType = .numbersAndPunctuation
         case .dns:
             cell.placeholderText = tunnelViewModel.peersData.contains(where: { $0.shouldStronglyRecommendDNS }) ? tr("tunnelEditPlaceholderTextStronglyRecommended") : tr("tunnelEditPlaceholderTextOptional")
+            cell.keyboardType = .numbersAndPunctuation
+        case .matchDomains:
+            cell.placeholderText = tr("tunnelEditPlaceholderTextOptional")
             cell.keyboardType = .numbersAndPunctuation
         case .listenPort, .mtu:
             cell.placeholderText = tr("tunnelEditPlaceholderTextAutomatic")

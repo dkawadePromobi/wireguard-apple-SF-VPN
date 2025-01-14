@@ -82,6 +82,7 @@
 "tunnelInterfaceListenPort" = "Listen port";
 "tunnelInterfaceMTU" = "MTU";
 "tunnelInterfaceDNS" = "DNS servers";
+"tunnelInterfaceMatchDomains" = "Match Domains";
 "tunnelInterfaceStatus" = "Status";
 
 "tunnelSectionTitlePeer" = "Peer";

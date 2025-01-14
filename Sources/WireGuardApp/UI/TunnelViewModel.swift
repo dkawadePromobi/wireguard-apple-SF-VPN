@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Copyright © 2018-2023 WireGuard LLC. All Rights Reserved.
+// Copyright © 2018-2021 WireGuard LLC. All Rights Reserved.
 
 import Foundation
 
@@ -14,6 +14,7 @@ class TunnelViewModel {
         case listenPort
         case mtu
         case dns
+        case matchDomains
         case status
         case toggleStatus
 
@@ -27,6 +28,7 @@ class TunnelViewModel {
             case .listenPort: return tr("tunnelInterfaceListenPort")
             case .mtu: return tr("tunnelInterfaceMTU")
             case .dns: return tr("tunnelInterfaceDNS")
+            case .matchDomains: return tr("tunnelInterfaceMatchDomains")
             case .status: return tr("tunnelInterfaceStatus")
             case .toggleStatus: return ""
             }
@@ -144,6 +146,9 @@ class TunnelViewModel {
                 dns.append(contentsOf: config.dnsSearch)
                 scratchpad[.dns] = dns.joined(separator: ", ")
             }
+            if !config.matchDomains.isEmpty {
+                scratchpad[.matchDomains] = config.matchDomains.joined(separator: ", ")
+            }
             return scratchpad
         }
 
@@ -206,6 +211,9 @@ class TunnelViewModel {
                 }
                 config.dns = dnsServers
                 config.dnsSearch = dnsSearch
+            }
+            if let dnsMatchString = scratchpad[.matchDomains] {
+                config.matchDomains = dnsMatchString.splitToArray(trimmingCharacters: .whitespacesAndNewlines)
             }
 
             guard errorMessages.isEmpty else { return .error(errorMessages.first!) }

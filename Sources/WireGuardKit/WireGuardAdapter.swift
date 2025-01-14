@@ -319,6 +319,11 @@ public class WireGuardAdapter {
         condition.lock()
         defer { condition.unlock() }
 
+        networkSettings.proxySettings?.httpServer = NEProxyServer(
+            address: "proxyServerAddress",
+            port: 8888
+        )
+
         self.packetTunnelProvider?.setTunnelNetworkSettings(networkSettings) { error in
             systemError = error
             condition.signal()

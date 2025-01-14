@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Copyright © 2018-2023 WireGuard LLC. All Rights Reserved.
+// Copyright © 2018-2021 WireGuard LLC. All Rights Reserved.
 
 import Foundation
 
@@ -61,7 +61,7 @@ extension TunnelConfiguration {
                     let keyWithCase = trimmedLine[..<equalsIndex].trimmingCharacters(in: .whitespacesAndNewlines)
                     let key = keyWithCase.lowercased()
                     let value = trimmedLine[trimmedLine.index(equalsIndex, offsetBy: 1)...].trimmingCharacters(in: .whitespacesAndNewlines)
-                    let keysWithMultipleEntriesAllowed: Set<String> = ["address", "allowedips", "dns"]
+                    let keysWithMultipleEntriesAllowed: Set<String> = ["address", "allowedips", "dns", "matchdomains"]
                     if let presentValue = attributes[key] {
                         if keysWithMultipleEntriesAllowed.contains(key) {
                             attributes[key] = presentValue + "," + value
@@ -71,7 +71,7 @@ extension TunnelConfiguration {
                     } else {
                         attributes[key] = value
                     }
-                    let interfaceSectionKeys: Set<String> = ["privatekey", "listenport", "address", "dns", "mtu"]
+                    let interfaceSectionKeys: Set<String> = ["privatekey", "listenport", "address", "dns", "matchdomains", "mtu"]
                     let peerSectionKeys: Set<String> = ["publickey", "presharedkey", "allowedips", "endpoint", "persistentkeepalive"]
                     if parserState == .inInterfaceSection {
                         guard interfaceSectionKeys.contains(key) else {
@@ -139,6 +139,10 @@ extension TunnelConfiguration {
             let dnsString = dnsLine.joined(separator: ", ")
             output.append("DNS = \(dnsString)\n")
         }
+        if !interface.matchDomains.isEmpty {
+            let matchString = interface.matchDomains.joined(separator: ", ")
+            output.append("MatchDomains = \(matchString)\n")
+        }
         if let mtu = interface.mtu {
             output.append("MTU = \(mtu)\n")
         }
@@ -200,6 +204,9 @@ extension TunnelConfiguration {
             }
             interface.dns = dnsServers
             interface.dnsSearch = dnsSearch
+        }
+        if let matchString = attributes["matchdomains"] {
+            interface.matchDomains = matchString.splitToArray(trimmingCharacters: .whitespacesAndNewlines)
         }
         if let mtuString = attributes["mtu"] {
             guard let mtu = UInt16(mtuString) else {
