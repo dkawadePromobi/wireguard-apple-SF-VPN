@@ -28,3 +28,16 @@ extension TunnelConfiguration: Equatable {
             Set(lhs.peers) == Set(rhs.peers)
     }
 }
+
+extension TunnelConfiguration {
+    /// `true` when any peer has an `AllowedIPs` entry with prefix length 0 (`0.0.0.0/0` or `::/0`).
+    /// Used for DNS (`matchDomains`) and for apps extending split-tunnel vs full-tunnel behavior.
+    public var routesAllTrafficThroughWireGuard: Bool {
+        for peer in peers {
+            for range in peer.allowedIPs where range.networkPrefixLength == 0 {
+                return true
+            }
+        }
+        return false
+    }
+}

@@ -91,7 +91,7 @@ class PacketTunnelSettingsGenerator {
                 // Only hijack all DNS when the WireGuard config routes all traffic (AllowedIPs /0).
                 // For split-tunnel (typical per-app VPN), matchDomains = [""] sends every lookup to
                 // tunnel DNS and often breaks public internet for that app if those servers don't recurse.
-                if Self.configurationRoutesAllTrafficThroughWireGuard(tunnelConfiguration) {
+                if tunnelConfiguration.routesAllTrafficThroughWireGuard {
                     dnsSettings.matchDomains = [""]
                 }
             }
@@ -177,16 +177,6 @@ class PacketTunnelSettingsGenerator {
         }
 
         return (ipv4IncludedRoutes, ipv6IncludedRoutes)
-    }
-
-    /// True when any peer has an AllowedIPs entry with prefix length 0 (0.0.0.0/0 or ::/0).
-    private static func configurationRoutesAllTrafficThroughWireGuard(_ config: TunnelConfiguration) -> Bool {
-        for peer in config.peers {
-            for range in peer.allowedIPs where range.networkPrefixLength == 0 {
-                return true
-            }
-        }
-        return false
     }
 
     private class func reresolveEndpoint(endpoint: Endpoint) -> EndpointResolutionResult {
