@@ -15,10 +15,13 @@ typealias EndpointResolutionResult = Result<(Endpoint, Endpoint), DNSResolutionE
 class PacketTunnelSettingsGenerator {
     let tunnelConfiguration: TunnelConfiguration
     let resolvedEndpoints: [Endpoint?]
+    /// When true, add default IPv4/IPv6 routes for MDM per-app VPN (`sourceApplication` routing).
+    let perAppVPNIncludeDefaultRoutes: Bool
 
-    init(tunnelConfiguration: TunnelConfiguration, resolvedEndpoints: [Endpoint?]) {
+    init(tunnelConfiguration: TunnelConfiguration, resolvedEndpoints: [Endpoint?], perAppVPNIncludeDefaultRoutes: Bool = false) {
         self.tunnelConfiguration = tunnelConfiguration
         self.resolvedEndpoints = resolvedEndpoints
+        self.perAppVPNIncludeDefaultRoutes = perAppVPNIncludeDefaultRoutes
     }
 
     func endpointUapiConfiguration() -> (String, [EndpointResolutionResult?]) {
@@ -170,7 +173,30 @@ class PacketTunnelSettingsGenerator {
                 }
             }
         }
+
+        if perAppVPNIncludeDefaultRoutes {
+            if !ipv4IncludedRoutes.contains(where: { Self.isIPv4DefaultRoute($0) }) {
+                ipv4IncludedRoutes.append(NEIPv4Route(destinationAddress: "0.0.0.0", subnetMask: "0.0.0.0"))
+            }
+            if !ipv6IncludedRoutes.contains(where: { Self.isIPv6DefaultRoute($0) }) {
+                ipv6IncludedRoutes.append(NEIPv6Route(destinationAddress: "::", networkPrefixLength: NSNumber(value: 0)))
+            }
+        }
+
         return (ipv4IncludedRoutes, ipv6IncludedRoutes)
+    }
+
+    private static func isIPv4DefaultRoute(_ route: NEIPv4Route) -> Bool {
+        let dest = route.destinationAddress
+        if dest == "0.0.0.0" { return true }
+        if dest.hasPrefix("0.0.0.0/") { return true }
+        return false
+    }
+
+    private static func isIPv6DefaultRoute(_ route: NEIPv6Route) -> Bool {
+        let dest = route.destinationAddress
+        if dest == "::" || dest == "::/0" { return true }
+        return false
     }
 
     private class func reresolveEndpoint(endpoint: Endpoint) -> EndpointResolutionResult {

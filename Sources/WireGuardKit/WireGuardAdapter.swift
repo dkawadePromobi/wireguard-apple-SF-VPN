@@ -56,6 +56,9 @@ public class WireGuardAdapter {
     /// Adapter state.
     private var state: State = .stopped
 
+    /// Options for `NEPacketTunnelNetworkSettings` (e.g. per-app VPN default routes).
+    private var networkSettingsOptions = WireGuardNetworkSettingsOptions()
+
     /// Tunnel device file descriptor.
     private var tunnelFileDescriptor: Int32? {
         var ctlInfo = ctl_info()
@@ -175,11 +178,22 @@ public class WireGuardAdapter {
     ///   - tunnelConfiguration: tunnel configuration.
     ///   - completionHandler: completion handler.
     public func start(tunnelConfiguration: TunnelConfiguration, completionHandler: @escaping (WireGuardAdapterError?) -> Void) {
+        start(tunnelConfiguration: tunnelConfiguration, networkSettingsOptions: WireGuardNetworkSettingsOptions(), completionHandler: completionHandler)
+    }
+
+    /// Start the tunnel with extra network-settings options (MDM per-app VPN).
+    /// - Parameters:
+    ///   - tunnelConfiguration: tunnel configuration.
+    ///   - networkSettingsOptions: routing options (e.g. default routes for `sourceApplication` per-app VPN).
+    ///   - completionHandler: completion handler.
+    public func start(tunnelConfiguration: TunnelConfiguration, networkSettingsOptions: WireGuardNetworkSettingsOptions, completionHandler: @escaping (WireGuardAdapterError?) -> Void) {
         workQueue.async {
             guard case .stopped = self.state else {
                 completionHandler(.invalidState)
                 return
             }
+
+            self.networkSettingsOptions = networkSettingsOptions
 
             let networkMonitor = NWPathMonitor()
             networkMonitor.pathUpdateHandler = { [weak self] path in
@@ -229,6 +243,7 @@ public class WireGuardAdapter {
             self.networkMonitor = nil
 
             self.state = .stopped
+            self.networkSettingsOptions = WireGuardNetworkSettingsOptions()
 
             completionHandler(nil)
         }
@@ -390,7 +405,8 @@ public class WireGuardAdapter {
     private func makeSettingsGenerator(with tunnelConfiguration: TunnelConfiguration) throws -> PacketTunnelSettingsGenerator {
         return PacketTunnelSettingsGenerator(
             tunnelConfiguration: tunnelConfiguration,
-            resolvedEndpoints: try self.resolvePeers(for: tunnelConfiguration)
+            resolvedEndpoints: try self.resolvePeers(for: tunnelConfiguration),
+            perAppVPNIncludeDefaultRoutes: self.networkSettingsOptions.perAppVPNIncludeDefaultRoutes
         )
     }
 
