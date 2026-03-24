@@ -15,13 +15,10 @@ typealias EndpointResolutionResult = Result<(Endpoint, Endpoint), DNSResolutionE
 class PacketTunnelSettingsGenerator {
     let tunnelConfiguration: TunnelConfiguration
     let resolvedEndpoints: [Endpoint?]
-    /// When true, add default IPv4/IPv6 routes for MDM per-app VPN (`sourceApplication` routing).
-    let perAppVPNIncludeDefaultRoutes: Bool
 
-    init(tunnelConfiguration: TunnelConfiguration, resolvedEndpoints: [Endpoint?], perAppVPNIncludeDefaultRoutes: Bool = false) {
+    init(tunnelConfiguration: TunnelConfiguration, resolvedEndpoints: [Endpoint?]) {
         self.tunnelConfiguration = tunnelConfiguration
         self.resolvedEndpoints = resolvedEndpoints
-        self.perAppVPNIncludeDefaultRoutes = perAppVPNIncludeDefaultRoutes
     }
 
     func endpointUapiConfiguration() -> (String, [EndpointResolutionResult?]) {
@@ -91,7 +88,12 @@ class PacketTunnelSettingsGenerator {
             let dnsSettings = NEDNSSettings(servers: dnsServerStrings)
             dnsSettings.searchDomains = tunnelConfiguration.interface.dnsSearch
             if !tunnelConfiguration.interface.dns.isEmpty {
-                dnsSettings.matchDomains = [""] // All DNS queries must first go through the tunnel's DNS
+                // Only hijack all DNS when the WireGuard config routes all traffic (AllowedIPs /0).
+                // For split-tunnel (typical per-app VPN), matchDomains = [""] sends every lookup to
+                // tunnel DNS and often breaks public internet for that app if those servers don't recurse.
+                if Self.configurationRoutesAllTrafficThroughWireGuard(tunnelConfiguration) {
+                    dnsSettings.matchDomains = [""]
+                }
             }
             networkSettings.dnsSettings = dnsSettings
         }
@@ -174,28 +176,16 @@ class PacketTunnelSettingsGenerator {
             }
         }
 
-        if perAppVPNIncludeDefaultRoutes {
-            if !ipv4IncludedRoutes.contains(where: { Self.isIPv4DefaultRoute($0) }) {
-                ipv4IncludedRoutes.append(NEIPv4Route(destinationAddress: "0.0.0.0", subnetMask: "0.0.0.0"))
-            }
-            if !ipv6IncludedRoutes.contains(where: { Self.isIPv6DefaultRoute($0) }) {
-                ipv6IncludedRoutes.append(NEIPv6Route(destinationAddress: "::", networkPrefixLength: NSNumber(value: 0)))
-            }
-        }
-
         return (ipv4IncludedRoutes, ipv6IncludedRoutes)
     }
 
-    private static func isIPv4DefaultRoute(_ route: NEIPv4Route) -> Bool {
-        let dest = route.destinationAddress
-        if dest == "0.0.0.0" { return true }
-        if dest.hasPrefix("0.0.0.0/") { return true }
-        return false
-    }
-
-    private static func isIPv6DefaultRoute(_ route: NEIPv6Route) -> Bool {
-        let dest = route.destinationAddress
-        if dest == "::" || dest == "::/0" { return true }
+    /// True when any peer has an AllowedIPs entry with prefix length 0 (0.0.0.0/0 or ::/0).
+    private static func configurationRoutesAllTrafficThroughWireGuard(_ config: TunnelConfiguration) -> Bool {
+        for peer in config.peers {
+            for range in peer.allowedIPs where range.networkPrefixLength == 0 {
+                return true
+            }
+        }
         return false
     }
 
