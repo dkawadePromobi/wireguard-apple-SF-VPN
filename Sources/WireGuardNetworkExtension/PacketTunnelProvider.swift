@@ -241,6 +241,20 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     /// Drains decrypted packets from wg-go and injects them back into the OS
     /// via `NEPacketTunnelFlow` so the app's sockets receive the responses.
+    private var statusCheckCount = 0
+
+    private func logWgStatus() {
+        guard perAppHandle >= 0 else { return }
+        statusCheckCount += 1
+        if let configPtr = wgGetConfig(perAppHandle) {
+            let config = String(cString: configPtr)
+            free(configPtr)
+            wg_log(.info, message: "DEBUG wg-status #\(statusCheckCount):\n\(config)")
+        } else {
+            wg_log(.error, message: "DEBUG wg-status #\(statusCheckCount): wgGetConfig returned nil (handle=\(perAppHandle))")
+        }
+    }
+
     private func startOutboundDrain() {
         drainQueue.async { [weak self] in
             guard let self = self else { return }
@@ -251,11 +265,18 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             var buffer = [UInt8](repeating: 0, count: bufferSize)
             var outboundCount = 0
             var emptyPolls = 0
+            var totalPolls = 0
 
             while self.relayRunning, self.perAppHandle >= 0 {
                 let n = buffer.withUnsafeMutableBytes { ptr -> Int32 in
                     guard let base = ptr.baseAddress else { return 0 }
                     return wgReceivePacket(self.perAppHandle, base, Int32(bufferSize))
+                }
+
+                totalPolls += 1
+                if totalPolls == 10000 {
+                    self.logWgStatus()
+                    totalPolls = 0
                 }
 
                 if n < 0 {
