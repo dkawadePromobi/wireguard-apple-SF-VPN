@@ -167,6 +167,14 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 return
             }
 
+            wg_log(.info, staticMessage: "DEBUG: setting up wg-go logger...")
+            wgSetLogger(nil) { _, logLevel, message in
+                guard let message = message else { return }
+                let str = String(cString: message).trimmingCharacters(in: .newlines)
+                let level: OSLogType = logLevel == 1 ? .error : .info
+                wg_log(level, message: "[wg-go] \(str)")
+            }
+
             wg_log(.info, staticMessage: "DEBUG: calling wgTurnOnPerApp...")
             let handle = wgConfig.withCString { wgTurnOnPerApp($0) }
             wg_log(.info, message: "DEBUG: wgTurnOnPerApp returned handle=\(handle)")
