@@ -75,13 +75,29 @@ class PacketTunnelSettingsGenerator {
     }
 
     func generateNetworkSettings() -> NEPacketTunnelNetworkSettings {
-        /* iOS requires a tunnel endpoint, whereas in WireGuard it's valid for
-         * a tunnel to have no endpoint, or for there to be many endpoints, in
-         * which case, displaying a single one in settings doesn't really
-         * make sense. So, we fill it in with this placeholder, which is not
-         * a valid IP address that will actually route over the Internet.
+        /* iOS requires a tunnel endpoint. For device-wide VPN the stock placeholder
+         * "127.0.0.1" is acceptable. For per-app VPN it must be the real server IP
+         * so that iOS correctly exempts the tunnel's own UDP traffic from the
+         * per-app flow filter (otherwise the handshake succeeds but data packets
+         * are misrouted and internet goes down for the target app).
+         *
+         * We derive it from the first successfully resolved peer endpoint.
+         * If resolution hasn't happened yet we fall back to the placeholder —
+         * WireGuardAdapter always resolves peers before calling generateNetworkSettings,
+         * so the fallback should never be hit in practice.
          */
-        let networkSettings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "127.0.0.1")
+        let tunnelRemoteAddress = resolvedEndpoints
+            .compactMap { $0 }                          // drop nil (unresolved)
+            .compactMap { endpoint -> String? in
+                switch endpoint.host {
+                case .ipv4(let addr): return "\(addr)"
+                case .ipv6(let addr): return "\(addr)"
+                case .name:           return nil        // not yet resolved — skip
+                }
+            }
+            .first ?? "127.0.0.1"                       // fallback (should not occur)
+
+        let networkSettings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: tunnelRemoteAddress)
 
         if !tunnelConfiguration.interface.dnsSearch.isEmpty || !tunnelConfiguration.interface.dns.isEmpty {
             let dnsServerStrings = tunnelConfiguration.interface.dns.map { $0.stringRepresentation }
