@@ -10,7 +10,8 @@ let package = Package(
         .macOS(.v10_15),
     ],
     products: [
-        .library(name: "WireGuardKit", targets: ["WireGuardKit"])
+        .library(name: "WireGuardKit", targets: ["WireGuardKit"]),
+        .library(name: "WireGuardKitGo", targets: ["WireGuardKitGo"])
     ],
     dependencies: [],
     targets: [
