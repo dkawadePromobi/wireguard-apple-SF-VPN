@@ -56,22 +56,6 @@ public class WireGuardAdapter {
     /// Adapter state.
     private var state: State = .stopped
 
-    // MARK: - Per-App VPN
-
-    /// When set, `startWireGuardBackend` will pass this fd to `wgTurnOn` instead
-    /// of the utun fd located by `tunnelFileDescriptor`.
-    ///
-    /// Set this to `relaySocketPair[1]` (the wg-go side) from `PacketTunnelProvider`
-    /// **before** calling `adapter.start(...)` in per-app VPN mode.
-    ///
-    /// Rationale: in per-app VPN mode the OS delivers packets through
-    /// `NEPacketTunnelFlow`, not as raw IP on the utun fd. If wg-go reads
-    /// directly from utun it sees non-IP bytes and logs
-    /// "Received packet with unknown IP version".
-    /// By giving wg-go one end of a socketpair, our relay loop in
-    /// `PacketTunnelProvider` can bridge `NEPacketTunnelFlow` ↔ wg-go cleanly.
-    public var overrideTunnelFileDescriptor: Int32? = nil
-
     /// Tunnel device file descriptor (utun, located by scanning open fds).
     private var tunnelFileDescriptor: Int32? {
         var ctlInfo = ctl_info()
@@ -381,34 +365,15 @@ public class WireGuardAdapter {
     }
 
     /// Start WireGuard backend.
-    ///
-    /// In normal (device-wide) VPN mode, wg-go receives the utun fd and reads/writes
-    /// raw IP packets directly from it.
-    ///
-    /// In per-app VPN mode, `overrideTunnelFileDescriptor` is set by
-    /// `PacketTunnelProvider` to the wg-go side of a socketpair **before** `start()`
-    /// is called. wg-go then operates on the socket fd, while our relay loop in
-    /// `PacketTunnelProvider` bridges `NEPacketTunnelFlow` ↔ the other socket end.
-    /// This prevents wg-go from ever seeing the non-IP bytes that cause
-    /// "Received packet with unknown IP version".
-    ///
     /// - Parameter wgConfig: WireGuard configuration string.
     /// - Throws: `WireGuardAdapterError`.
     /// - Returns: tunnel handle.
     private func startWireGuardBackend(wgConfig: String) throws -> Int32 {
-        // Use the override fd (per-app socketpair) if set, otherwise fall back to utun.
-        let fd: Int32
-        if let overrideFd = overrideTunnelFileDescriptor {
-            logHandler(.verbose, "Per-app VPN: using override fd \(overrideFd) for wgTurnOn")
-            fd = overrideFd
-        } else {
-            guard let utunFd = self.tunnelFileDescriptor else {
-                throw WireGuardAdapterError.cannotLocateTunnelFileDescriptor
-            }
-            fd = utunFd
+        guard let tunnelFileDescriptor = self.tunnelFileDescriptor else {
+            throw WireGuardAdapterError.cannotLocateTunnelFileDescriptor
         }
 
-        let handle = wgTurnOn(wgConfig, fd)
+        let handle = wgTurnOn(wgConfig, tunnelFileDescriptor)
         if handle < 0 {
             throw WireGuardAdapterError.startWireGuardBackend(handle)
         }

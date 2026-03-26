@@ -21,6 +21,7 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 	"unsafe"
 
@@ -57,6 +58,7 @@ type tunnelHandle struct {
 }
 
 var tunnelHandles = make(map[int32]tunnelHandle)
+var channelTUNHandles = make(map[int32]*ChannelTUN)
 
 func init() {
 	signals := make(chan os.Signal)
@@ -75,6 +77,80 @@ func init() {
 		}
 	}()
 }
+
+// ---------------------------------------------------------------------------
+// ChannelTUN: software TUN backed by Go channels for per-app VPN.
+//
+// In per-app VPN mode, iOS delivers packets to NEPacketTunnelFlow with
+// Apple-specific framing. If wg-go reads directly from the utun fd it
+// sees non-IP bytes and logs "Received packet with unknown IP version".
+//
+// ChannelTUN removes the utun fd from the picture entirely. Swift reads
+// clean IP packets from NEPacketTunnelFlow and pushes them into the
+// Inbound channel via wgSendPacket; wg-go encrypts them and sends them
+// to the peer. Decrypted responses go to the Outbound channel and Swift
+// drains them via wgReceivePacket back into NEPacketTunnelFlow.
+// ---------------------------------------------------------------------------
+
+type ChannelTUN struct {
+	Inbound  chan []byte
+	Outbound chan []byte
+	closed   chan struct{}
+	once     sync.Once
+	events   chan tun.Event
+	mtu      int
+}
+
+func NewChannelTUN(mtu int) *ChannelTUN {
+	return &ChannelTUN{
+		Inbound:  make(chan []byte, 256),
+		Outbound: make(chan []byte, 256),
+		closed:   make(chan struct{}),
+		events:   make(chan tun.Event, 16),
+		mtu:      mtu,
+	}
+}
+
+func (t *ChannelTUN) File() *os.File { return nil }
+
+func (t *ChannelTUN) Read(buf []byte, offset int) (int, error) {
+	select {
+	case <-t.closed:
+		return 0, os.ErrClosed
+	case pkt := <-t.Inbound:
+		n := copy(buf[offset:], pkt)
+		return n, nil
+	}
+}
+
+func (t *ChannelTUN) Write(buf []byte, offset int) (int, error) {
+	pkt := make([]byte, len(buf)-offset)
+	copy(pkt, buf[offset:])
+	select {
+	case <-t.closed:
+		return 0, os.ErrClosed
+	case t.Outbound <- pkt:
+	}
+	return len(pkt), nil
+}
+
+func (t *ChannelTUN) Flush() error              { return nil }
+func (t *ChannelTUN) MTU() (int, error)          { return t.mtu, nil }
+func (t *ChannelTUN) Name() (string, error)      { return "perapp0", nil }
+func (t *ChannelTUN) Events() <-chan tun.Event   { return t.events }
+
+func (t *ChannelTUN) Close() error {
+	t.once.Do(func() {
+		close(t.closed)
+		t.events <- tun.EventDown
+		close(t.events)
+	})
+	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Logger & standard tunnel (device-wide) — original, unchanged
+// ---------------------------------------------------------------------------
 
 //export wgSetLogger
 func wgSetLogger(context, loggerFn uintptr) {
@@ -133,11 +209,92 @@ func wgTurnOn(settings *C.char, tunFd int32) int32 {
 	return i
 }
 
+// ---------------------------------------------------------------------------
+// Per-app tunnel — uses ChannelTUN, NO utun fd involved
+// ---------------------------------------------------------------------------
+
+//export wgTurnOnPerApp
+func wgTurnOnPerApp(settings *C.char) int32 {
+	logger := &device.Logger{
+		Verbosef: CLogger(0).Printf,
+		Errorf:   CLogger(1).Printf,
+	}
+
+	tunDev := NewChannelTUN(1280)
+
+	logger.Verbosef("Creating per-app ChannelTUN device")
+	dev := device.NewDevice(tunDev, conn.NewStdNetBind(), logger)
+
+	err := dev.IpcSet(C.GoString(settings))
+	if err != nil {
+		logger.Errorf("Per-app: unable to set IPC settings: %v", err)
+		dev.Close()
+		return -1
+	}
+
+	dev.Up()
+	logger.Verbosef("Per-app device started")
+
+	var i int32
+	for i = 0; i < math.MaxInt32; i++ {
+		if _, exists := tunnelHandles[i]; !exists {
+			break
+		}
+	}
+	if i == math.MaxInt32 {
+		return -1
+	}
+	tunnelHandles[i] = tunnelHandle{dev, logger}
+	channelTUNHandles[i] = tunDev
+	return i
+}
+
+//export wgSendPacket
+func wgSendPacket(handle int32, packetData unsafe.Pointer, packetLen C.int) {
+	ct, ok := channelTUNHandles[handle]
+	if !ok || ct == nil {
+		return
+	}
+	pkt := C.GoBytes(packetData, packetLen)
+	select {
+	case ct.Inbound <- pkt:
+	default:
+		CLogger(1).Printf("wgSendPacket: inbound channel full, dropping packet")
+	}
+}
+
+//export wgReceivePacket
+func wgReceivePacket(handle int32, buffer unsafe.Pointer, bufferLen C.int) C.int {
+	ct, ok := channelTUNHandles[handle]
+	if !ok || ct == nil {
+		return -1
+	}
+	select {
+	case pkt := <-ct.Outbound:
+		if len(pkt) > int(bufferLen) {
+			CLogger(1).Printf("wgReceivePacket: packet too large, dropping")
+			return 0
+		}
+		copy((*[1 << 20]byte)(buffer)[:len(pkt)], pkt)
+		return C.int(len(pkt))
+	default:
+		return 0
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Common control functions
+// ---------------------------------------------------------------------------
+
 //export wgTurnOff
 func wgTurnOff(tunnelHandle int32) {
 	dev, ok := tunnelHandles[tunnelHandle]
 	if !ok {
 		return
+	}
+	if ct, ok := channelTUNHandles[tunnelHandle]; ok {
+		ct.Close()
+		delete(channelTUNHandles, tunnelHandle)
 	}
 	delete(tunnelHandles, tunnelHandle)
 	dev.Close()
