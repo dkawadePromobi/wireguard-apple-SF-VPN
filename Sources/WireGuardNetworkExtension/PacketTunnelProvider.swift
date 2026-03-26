@@ -352,13 +352,23 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     // MARK: - Helpers
 
-    /// Detects per-app VPN by checking providerConfiguration for a flag.
-    /// Add `"PerAppVPN": true` (or `"IsPerAppVPN": "true"`) to the
-    /// VendorConfig dict in your MDM payload to enable the per-app path.
+    /// Detects per-app VPN mode.
+    ///
+    /// Priority: explicit `PerAppVPN` flag in VendorConfig > auto-detect.
+    ///
+    /// Auto-detect: when iOS activates a tunnel from an MDM
+    /// `com.apple.vpn.managed.applayer` profile, `passwordReference` is nil
+    /// and the WireGuard config lives in `providerConfiguration["WgQuickConfig"]`.
+    /// App-configured device-wide VPN always stores the config in the keychain
+    /// (`passwordReference` is set). This distinction reliably identifies
+    /// MDM per-app VPN without requiring extra keys in the MDM payload.
     private func detectPerAppVPN(from proto: NETunnelProviderProtocol) -> Bool {
-        guard let config = proto.providerConfiguration else { return false }
-        if let flag = config["PerAppVPN"] as? Bool { return flag }
-        if let flag = config["IsPerAppVPN"] as? String { return flag == "true" }
+        let config = proto.providerConfiguration
+        if let flag = config?["PerAppVPN"] as? Bool { return flag }
+        if let flag = config?["IsPerAppVPN"] as? String { return flag == "true" }
+        if proto.passwordReference == nil && config?["WgQuickConfig"] != nil {
+            return true
+        }
         return false
     }
 
