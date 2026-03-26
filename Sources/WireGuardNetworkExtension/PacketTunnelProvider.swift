@@ -24,6 +24,10 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// Controls the relay loops between NEPacketTunnelFlow and wg-go.
     private var relayRunning = false
 
+    /// Stored for deferred logging (startup logs are lost before debugger attaches).
+    private var savedUAPIConfig: String = ""
+    private var savedPeerCount: Int = 0
+
     /// Background queue for draining wg-go outbound packets.
     private let drainQueue = DispatchQueue(label: "WireGuardPerAppDrainQueue", qos: .userInteractive)
 
@@ -150,7 +154,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             return
         }
 
-        wg_log(.info, message: "DEBUG: UAPI config length=\(wgConfig.count)")
+        self.savedUAPIConfig = wgConfig
+        self.savedPeerCount = tunnelConfiguration.peers.count
+        wg_log(.info, message: "DEBUG: UAPI config length=\(wgConfig.count), peers=\(tunnelConfiguration.peers.count)")
         wg_log(.info, message: "DEBUG: UAPI config=\(wgConfig)")
 
         let networkSettings = buildNetworkSettings(from: tunnelConfiguration)
@@ -246,6 +252,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     private func logWgStatus() {
         guard perAppHandle >= 0 else { return }
         statusCheckCount += 1
+
+        if statusCheckCount == 1 {
+            wg_log(.info, message: "DEBUG UAPI-config (peers=\(savedPeerCount)):\n\(savedUAPIConfig)")
+        }
+
         if let configPtr = wgGetConfig(perAppHandle) {
             let config = String(cString: configPtr)
             free(configPtr)
