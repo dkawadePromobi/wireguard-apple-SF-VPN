@@ -46,6 +46,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
         isPerAppVPN = detectPerAppVPN(from: tunnelProviderProtocol)
         wg_log(.info, message: "Per-app VPN mode: \(isPerAppVPN)")
+        wg_log(.info, message: "DEBUG: tunnelConfiguration peers=\(tunnelConfiguration.peers.count), interface addresses=\(tunnelConfiguration.interface.addresses.count)")
 
         if isPerAppVPN {
             startPerAppTunnel(
@@ -149,7 +150,14 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             return
         }
 
+        wg_log(.info, message: "DEBUG: UAPI config length=\(wgConfig.count)")
+        wg_log(.info, message: "DEBUG: UAPI config=\(wgConfig)")
+
         let networkSettings = buildNetworkSettings(from: tunnelConfiguration)
+        wg_log(.info, message: "DEBUG: tunnelRemoteAddress=\(networkSettings.tunnelRemoteAddress)")
+        wg_log(.info, message: "DEBUG: DNS=\(networkSettings.dnsSettings?.servers ?? [])")
+        wg_log(.info, message: "DEBUG: MTU=\(networkSettings.mtu ?? 0)")
+        wg_log(.info, message: "DEBUG: IPv4 routes=\(networkSettings.ipv4Settings?.includedRoutes?.count ?? 0)")
 
         setTunnelNetworkSettings(networkSettings) { error in
             if let error = error {
@@ -159,7 +167,9 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 return
             }
 
+            wg_log(.info, staticMessage: "DEBUG: calling wgTurnOnPerApp...")
             let handle = wgConfig.withCString { wgTurnOnPerApp($0) }
+            wg_log(.info, message: "DEBUG: wgTurnOnPerApp returned handle=\(handle)")
             guard handle >= 0 else {
                 wg_log(.error, message: "Per-app VPN: wgTurnOnPerApp returned \(handle)")
                 errorNotifier.notify(PacketTunnelProviderError.couldNotStartBackend)
@@ -175,9 +185,11 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
             #endif
 
             self.relayRunning = true
+            wg_log(.info, staticMessage: "DEBUG: starting inbound relay and outbound drain")
             self.startInboundRelay()
             self.startOutboundDrain()
 
+            wg_log(.info, staticMessage: "DEBUG: relay loops started, calling completionHandler")
             completionHandler(nil)
         }
     }
@@ -187,9 +199,17 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
     /// Reads packets iOS delivers for per-app VPN flows and pushes raw IP
     /// into wg-go via `wgSendPacket`. `NEPacketTunnelFlow` strips Apple's
     /// per-app framing — `packet.data` is always a raw IP packet.
+    private var inboundPacketCount: Int = 0
+
     private func startInboundRelay() {
         packetFlow.readPacketObjects { [weak self] packets in
-            guard let self = self, self.relayRunning, self.perAppHandle >= 0 else { return }
+            guard let self = self, self.relayRunning, self.perAppHandle >= 0 else {
+                wg_log(.info, message: "DEBUG inbound: guard failed — relayRunning=\(self?.relayRunning ?? false) handle=\(self?.perAppHandle ?? -99)")
+                return
+            }
+
+            self.inboundPacketCount += packets.count
+            wg_log(.info, message: "DEBUG inbound: received \(packets.count) packets (total=\(self.inboundPacketCount))")
 
             for packet in packets {
                 let data = packet.data
@@ -217,8 +237,12 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
         drainQueue.async { [weak self] in
             guard let self = self else { return }
 
+            wg_log(.info, staticMessage: "DEBUG outbound: drain loop started")
+
             let bufferSize = 65535
             var buffer = [UInt8](repeating: 0, count: bufferSize)
+            var outboundCount = 0
+            var emptyPolls = 0
 
             while self.relayRunning, self.perAppHandle >= 0 {
                 let n = buffer.withUnsafeMutableBytes { ptr -> Int32 in
@@ -226,10 +250,24 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                     return wgReceivePacket(self.perAppHandle, base, Int32(bufferSize))
                 }
 
-                if n < 0 { break }
+                if n < 0 {
+                    wg_log(.error, message: "DEBUG outbound: wgReceivePacket returned \(n), breaking")
+                    break
+                }
                 if n == 0 {
+                    emptyPolls += 1
+                    if emptyPolls == 5000 {
+                        wg_log(.info, message: "DEBUG outbound: 5000 empty polls, no data yet (total received=\(outboundCount))")
+                        emptyPolls = 0
+                    }
                     usleep(200)
                     continue
+                }
+
+                outboundCount += 1
+                emptyPolls = 0
+                if outboundCount <= 10 || outboundCount % 100 == 0 {
+                    wg_log(.info, message: "DEBUG outbound: received packet #\(outboundCount) size=\(n)")
                 }
 
                 let packetData = Data(bytes: buffer, count: Int(n))
@@ -242,7 +280,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                 self.packetFlow.writePacketObjects([NEPacket(data: packetData, protocolFamily: family)])
             }
 
-            wg_log(.info, staticMessage: "Per-app outbound drain stopped")
+            wg_log(.info, message: "DEBUG outbound: drain loop stopped. Total packets received=\(outboundCount)")
         }
     }
 

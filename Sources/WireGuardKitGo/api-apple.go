@@ -102,13 +102,15 @@ type ChannelTUN struct {
 }
 
 func NewChannelTUN(mtu int) *ChannelTUN {
-	return &ChannelTUN{
+	ct := &ChannelTUN{
 		Inbound:  make(chan []byte, 256),
 		Outbound: make(chan []byte, 256),
 		closed:   make(chan struct{}),
 		events:   make(chan tun.Event, 16),
 		mtu:      mtu,
 	}
+	ct.events <- tun.EventUp
+	return ct
 }
 
 func (t *ChannelTUN) File() *os.File { return nil }
@@ -225,15 +227,19 @@ func wgTurnOnPerApp(settings *C.char) int32 {
 	logger.Verbosef("Creating per-app ChannelTUN device")
 	dev := device.NewDevice(tunDev, conn.NewStdNetBind(), logger)
 
-	err := dev.IpcSet(C.GoString(settings))
+	settingsStr := C.GoString(settings)
+	logger.Verbosef("Per-app: IPC settings length=%d", len(settingsStr))
+
+	err := dev.IpcSet(settingsStr)
 	if err != nil {
 		logger.Errorf("Per-app: unable to set IPC settings: %v", err)
 		dev.Close()
 		return -1
 	}
+	logger.Verbosef("Per-app: IPC settings applied successfully")
 
 	dev.Up()
-	logger.Verbosef("Per-app device started")
+	logger.Verbosef("Per-app device started, device.Up() called")
 
 	var i int32
 	for i = 0; i < math.MaxInt32; i++ {
@@ -253,6 +259,7 @@ func wgTurnOnPerApp(settings *C.char) int32 {
 func wgSendPacket(handle int32, packetData unsafe.Pointer, packetLen C.int) {
 	ct, ok := channelTUNHandles[handle]
 	if !ok || ct == nil {
+		CLogger(1).Printf("wgSendPacket: no channelTUN for handle %d", handle)
 		return
 	}
 	pkt := C.GoBytes(packetData, packetLen)
@@ -267,12 +274,13 @@ func wgSendPacket(handle int32, packetData unsafe.Pointer, packetLen C.int) {
 func wgReceivePacket(handle int32, buffer unsafe.Pointer, bufferLen C.int) C.int {
 	ct, ok := channelTUNHandles[handle]
 	if !ok || ct == nil {
+		CLogger(1).Printf("wgReceivePacket: no channelTUN for handle %d", handle)
 		return -1
 	}
 	select {
 	case pkt := <-ct.Outbound:
 		if len(pkt) > int(bufferLen) {
-			CLogger(1).Printf("wgReceivePacket: packet too large, dropping")
+			CLogger(1).Printf("wgReceivePacket: packet too large (%d > %d), dropping", len(pkt), bufferLen)
 			return 0
 		}
 		copy((*[1 << 20]byte)(buffer)[:len(pkt)], pkt)
