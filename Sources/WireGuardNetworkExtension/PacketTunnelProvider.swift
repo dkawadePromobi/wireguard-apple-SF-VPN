@@ -238,7 +238,7 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
                     continue
                 }
 
-                let family: UInt32 = version == 4 ? UInt32(AF_INET) : UInt32(AF_INET6)
+                let family: sa_family_t = version == 4 ? sa_family_t(AF_INET) : sa_family_t(AF_INET6)
                 self.packetFlow.writePacketObjects([NEPacket(data: packetData, protocolFamily: family)])
             }
 
