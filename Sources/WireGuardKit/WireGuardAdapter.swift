@@ -56,7 +56,7 @@ public class WireGuardAdapter {
     /// Adapter state.
     private var state: State = .stopped
 
-    /// Tunnel device file descriptor.
+    /// Tunnel device file descriptor (utun, located by scanning open fds).
     private var tunnelFileDescriptor: Int32? {
         var ctlInfo = ctl_info()
         withUnsafeMutablePointer(to: &ctlInfo.ctl_name) {
@@ -170,7 +170,7 @@ public class WireGuardAdapter {
         }
     }
 
-    /// Start the tunnel tunnel.
+    /// Start the tunnel.
     /// - Parameters:
     ///   - tunnelConfiguration: tunnel configuration.
     ///   - completionHandler: completion handler.
@@ -365,9 +365,9 @@ public class WireGuardAdapter {
     }
 
     /// Start WireGuard backend.
-    /// - Parameter wgConfig: WireGuard configuration
-    /// - Throws: an error of type `WireGuardAdapterError`
-    /// - Returns: tunnel handle
+    /// - Parameter wgConfig: WireGuard configuration string.
+    /// - Throws: `WireGuardAdapterError`.
+    /// - Returns: tunnel handle.
     private func startWireGuardBackend(wgConfig: String) throws -> Int32 {
         guard let tunnelFileDescriptor = self.tunnelFileDescriptor else {
             throw WireGuardAdapterError.cannotLocateTunnelFileDescriptor

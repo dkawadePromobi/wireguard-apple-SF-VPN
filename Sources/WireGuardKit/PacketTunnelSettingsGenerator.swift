@@ -80,6 +80,11 @@ class PacketTunnelSettingsGenerator {
          * which case, displaying a single one in settings doesn't really
          * make sense. So, we fill it in with this placeholder, which is not
          * a valid IP address that will actually route over the Internet.
+         *
+         * Note: this generator is consumed only by the device-wide VPN path
+         * (via WireGuardAdapter). The per-app VPN path in PacketTunnelProvider
+         * builds its own NEPacketTunnelNetworkSettings and sets a real
+         * tunnelRemoteAddress there, where it actually matters.
          */
         let networkSettings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: "127.0.0.1")
 

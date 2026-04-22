@@ -20,4 +20,15 @@ extern void wgBumpSockets(int handle);
 extern void wgDisableSomeRoamingForBrokenMobileSemantics(int handle);
 extern const char *wgVersion();
 
+/* Per-app VPN — ChannelTUN-backed, no utun fd required.
+ *
+ *   1. handle = wgTurnOnPerApp(settings)
+ *   2. wgSendPacket(handle, ptr, len)        // NEPacketTunnelFlow -> wg-go
+ *   3. n = wgReceivePacket(handle, buf, cap)  // wg-go -> NEPacketTunnelFlow
+ *   4. wgTurnOff(handle)
+ */
+extern int wgTurnOnPerApp(const char *settings);
+extern void wgSendPacket(int handle, const void *packetData, int packetLen);
+extern int wgReceivePacket(int handle, void *buffer, int bufferLen);
+
 #endif
