@@ -430,8 +430,72 @@ class PacketTunnelProvider: NEPacketTunnelProvider {
 
     // MARK: - Helpers
 
+    /// Detects whether this tunnel should run on the per-app VPN code path
+    /// (ChannelTUN + NEPacketTunnelFlow relays) or the device-wide path
+    /// (utun fd via WireGuardAdapter).
+    ///
+    /// IMPORTANT — default policy for SF-VPN:
+    /// This package's primary deployment target is MDM `com.apple.vpn.managed.applayer`
+    /// (per-app VPN). Both per-app and device MDM payloads deliver `WgQuickConfig`
+    /// via `providerConfiguration` with `passwordReference == nil`, so the two
+    /// cannot be distinguished automatically. We therefore default to per-app
+    /// and require device-wide VPN payloads to opt out explicitly.
+    ///
+    /// Detection priority:
+    ///   1. Explicit `PerAppVPN` (Bool) or `IsPerAppVPN` ("true"/"false") flag in
+    ///      VendorConfig. Device payloads MUST set `PerAppVPN=false` to use the
+    ///      device-wide path; otherwise the per-app path is selected.
+    ///   2. KVC `appRules`: when iOS surfaces NEAppRules on the protocol, the
+    ///      tunnel is unambiguously per-app. (Available on some iOS versions.)
+    ///   3. Default: per-app (true).
+    ///
+    /// Going through the wrong path produces:
+    ///   - Per-app payload routed via device path -> wg-go reads Apple per-app
+    ///     framing from utun -> "Received packet with unknown IP version" spam,
+    ///     no traffic flows.
+    ///   - Device payload routed via per-app path -> NEPacketTunnelFlow never
+    ///     receives packets (the OS uses utun for device VPN) -> tunnel is up
+    ///     but no traffic.
     private func detectPerAppVPN(from proto: NETunnelProviderProtocol) -> Bool {
+        let config = proto.providerConfiguration
+
+        if let flag = boolValue(config?["PerAppVPN"]) {
+            return flag
+        }
+        if let flag = boolValue(config?["IsPerAppVPN"]) {
+            return flag
+        }
+
+        if proto.responds(to: NSSelectorFromString("appRules")),
+           let appRules = proto.value(forKey: "appRules") as? [Any],
+           !appRules.isEmpty {
+            return true
+        }
+
         return true
+    }
+
+    /// Coerces the heterogeneous values an MDM may send for a "boolean" flag
+    /// in `providerConfiguration` into a real `Bool`.
+    ///
+    /// Different MDM consoles serialize `<true/>`/`<false/>` from a custom
+    /// payload editor inconsistently — sometimes as `NSNumber`, sometimes as
+    /// the strings `"true"`/`"false"`/`"1"`/`"0"`/`"yes"`/`"no"`, and
+    /// sometimes (rarely) as raw integers. Returns nil if the value is
+    /// missing or unrecognizable so the caller can fall through to the next
+    /// detection signal.
+    private func boolValue(_ raw: Any?) -> Bool? {
+        guard let raw = raw else { return nil }
+        if let b = raw as? Bool { return b }
+        if let n = raw as? NSNumber { return n.boolValue }
+        if let s = raw as? String {
+            switch s.lowercased() {
+            case "true", "1", "yes":  return true
+            case "false", "0", "no": return false
+            default: return nil
+            }
+        }
+        return nil
     }
 
     private func isValidIPPacket(_ data: Data) -> Bool {

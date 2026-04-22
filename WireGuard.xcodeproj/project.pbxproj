@@ -1734,7 +1734,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				PATH = "${PATH}:/opt/homebrew/opt/go@1.22/bin";
+				PATH = "${PATH}:/opt/homebrew/opt/go@1.25/bin";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Debug;
@@ -1743,7 +1743,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
-				PATH = "${PATH}:/opt/homebrew/opt/go@1.22/bin";
+				PATH = "${PATH}:/opt/homebrew/opt/go@1.25/bin";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Release;
