@@ -44,6 +44,9 @@ public class WireGuardAdapter {
     /// Network routes monitor.
     private var networkMonitor: NWPathMonitor?
 
+    /// Debounces MTU / network-settings refresh on rapid NWPathMonitor callbacks.
+    private var pathUpdateRefreshWorkItem: DispatchWorkItem?
+
     /// Packet tunnel provider.
     private weak var packetTunnelProvider: NEPacketTunnelProvider?
 
@@ -227,6 +230,8 @@ public class WireGuardAdapter {
 
             self.networkMonitor?.cancel()
             self.networkMonitor = nil
+            self.pathUpdateRefreshWorkItem?.cancel()
+            self.pathUpdateRefreshWorkItem = nil
 
             self.state = .stopped
 
@@ -417,20 +422,58 @@ public class WireGuardAdapter {
         self.logHandler(.verbose, "Network change detected with \(path.status) route and interface order \(path.availableInterfaces)")
 
         #if os(macOS)
+        // Automatic MTU uses tunnelOverheadBytes (path MTU - 80).
+        // Re-apply NEPacketTunnelNetworkSettings on path changes so the system
+        // recomputes tunnel MTU for the new network (including Wi-Fi→Wi-Fi on same enX).
         if case .started(let handle, _) = self.state {
-            wgBumpSockets(handle)
+            if path.status.isSatisfiable {
+                self.pathUpdateRefreshWorkItem?.cancel()
+                let workItem = DispatchWorkItem { [weak self] in
+                    guard let self = self else { return }
+                    guard case .started(let currentHandle, let currentSettingsGenerator) = self.state else { return }
+                    do {
+                        try self.setNetworkSettings(currentSettingsGenerator.generateNetworkSettings())
+                        let (wgConfig, resolutionResults) = currentSettingsGenerator.endpointUapiConfiguration()
+                        self.logEndpointResolutionResults(resolutionResults)
+                        wgSetConfig(currentHandle, wgConfig)
+                        self.logHandler(.verbose, "Reapplied tunnel network settings after path change (MTU = path MTU - 80)")
+                    } catch {
+                        self.logHandler(.error, "Failed to reapply network settings after path change: \(error.localizedDescription)")
+                    }
+                    wgBumpSockets(currentHandle)
+                }
+                self.pathUpdateRefreshWorkItem = workItem
+                self.workQueue.asyncAfter(deadline: .now() + 0.5, execute: workItem)
+            } else {
+                self.pathUpdateRefreshWorkItem?.cancel()
+                wgBumpSockets(handle)
+            }
         }
         #elseif os(iOS)
         switch self.state {
         case .started(let handle, let settingsGenerator):
             if path.status.isSatisfiable {
-                let (wgConfig, resolutionResults) = settingsGenerator.endpointUapiConfiguration()
-                self.logEndpointResolutionResults(resolutionResults)
-
-                wgSetConfig(handle, wgConfig)
-                wgDisableSomeRoamingForBrokenMobileSemantics(handle)
-                wgBumpSockets(handle)
+                // Re-apply settings so automatic MTU (path MTU - 80) tracks the new path.
+                self.pathUpdateRefreshWorkItem?.cancel()
+                let workItem = DispatchWorkItem { [weak self] in
+                    guard let self = self else { return }
+                    guard case .started(let currentHandle, let currentSettingsGenerator) = self.state else { return }
+                    do {
+                        try self.setNetworkSettings(currentSettingsGenerator.generateNetworkSettings())
+                        let (wgConfig, resolutionResults) = currentSettingsGenerator.endpointUapiConfiguration()
+                        self.logEndpointResolutionResults(resolutionResults)
+                        wgSetConfig(currentHandle, wgConfig)
+                        wgDisableSomeRoamingForBrokenMobileSemantics(currentHandle)
+                        self.logHandler(.verbose, "Reapplied tunnel network settings after path change (MTU = path MTU - 80)")
+                    } catch {
+                        self.logHandler(.error, "Failed to reapply network settings after path change: \(error.localizedDescription)")
+                    }
+                    wgBumpSockets(currentHandle)
+                }
+                self.pathUpdateRefreshWorkItem = workItem
+                self.workQueue.asyncAfter(deadline: .now() + 0.5, execute: workItem)
             } else {
+                self.pathUpdateRefreshWorkItem?.cancel()
                 self.logHandler(.verbose, "Connectivity offline, pausing backend.")
 
                 self.state = .temporaryShutdown(settingsGenerator)

@@ -95,20 +95,13 @@ class PacketTunnelSettingsGenerator {
 
         let mtu = tunnelConfiguration.interface.mtu ?? 0
 
-        /* 0 means automatic MTU. In theory, we should just do
-         * `networkSettings.tunnelOverheadBytes = 80` but in
-         * practice there are too many broken networks out there.
-         * Instead set it to 1280. Boohoo. Maybe someday we'll
-         * add a nob, maybe, or iOS will do probing for us.
+        /* 0 means automatic MTU.
+         * tunnelOverheadBytes = 80 → system sets tunnel MTU = path MTU - 80
+         * on both iOS and macOS. WireGuardAdapter re-applies these settings on
+         * network path changes so MTU stays correct after network switches.
          */
         if mtu == 0 {
-            #if os(iOS)
-            networkSettings.mtu = NSNumber(value: 1280)
-            #elseif os(macOS)
             networkSettings.tunnelOverheadBytes = 80
-            #else
-            #error("Unimplemented")
-            #endif
         } else {
             networkSettings.mtu = NSNumber(value: mtu)
         }
